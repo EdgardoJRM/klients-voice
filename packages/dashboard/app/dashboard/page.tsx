@@ -26,6 +26,8 @@ function formatApiError(apiMessage: unknown, json: { error?: { code?: string } }
 
 export default function TenantDashboardPage() {
   const tenantId = process.env.NEXT_PUBLIC_KV_TENANT_ID ?? "";
+  /** Ocultar enlace a /super (p.ej. despliegue solo tenants): NEXT_PUBLIC_SHOW_SUPER_NAV=false */
+  const showSuperNav = process.env.NEXT_PUBLIC_SHOW_SUPER_NAV !== "false";
   const [events, setEvents] = useState<EventRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -64,9 +66,16 @@ export default function TenantDashboardPage() {
             Diseño SaaS minimal — branding por tenant llegará desde la API (`branding`).
           </p>
         </div>
-        <Link href="/super" className="text-sm text-slate-600 underline">
-          Vista agencia / super admin
-        </Link>
+        {showSuperNav ? (
+          <div className="text-right">
+            <Link href="/super" className="text-sm text-slate-600 underline underline-offset-2">
+              Administración central
+            </Link>
+            <p className="mt-1 max-w-xs text-[11px] leading-snug text-slate-400">
+              Requiere <code className="rounded bg-slate-100 px-0.5">super_admin</code> en Cognito; si entras como tenant verás Forbidden.
+            </p>
+          </div>
+        ) : null}
       </div>
       {err && (
         <div className="mt-8 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800">

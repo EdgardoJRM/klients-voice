@@ -15,9 +15,49 @@ type TenantRow = {
 function formatListTenantsError(json: { error?: { message?: string; code?: string } }): string {
   const message = json.error?.message ?? "";
   if (message === "Forbidden" || json.error?.code === "FORBIDDEN") {
-    return "Necesitas rol super_admin (o agency_admin) en Cognito para ver todos los tenants; el dashboard de tenant está en /dashboard.";
+    return "FORBIDDEN_SUPER";
   }
   return typeof message === "string" && message.length > 0 ? message : "Error API";
+}
+
+function ForbiddenSuperInstructions() {
+  return (
+    <div className="space-y-4 text-red-950">
+      <p className="font-medium leading-relaxed">
+        Esta pantalla lista <strong>todos los tenants</strong>. El API solo la permite si tu JWT lleva rol{" "}
+        <code className="rounded bg-white/80 px-1">super_admin</code> o{" "}
+        <code className="rounded bg-white/80 px-1">agency_admin</code>. Con un login normal por enlace mágico sueles tener{" "}
+        <code className="rounded bg-white/80 px-1">tenant_admin</code> — usa{" "}
+        <Link href="/dashboard" className="font-medium underline">
+          /dashboard
+        </Link>{" "}
+        para tu organización.
+      </p>
+      <div className="rounded-lg border border-red-200 bg-white/90 p-4 text-sm leading-relaxed text-slate-800">
+        <p className="font-semibold text-slate-900">Si de verdad necesitas rol global</p>
+        <ol className="mt-2 list-decimal space-y-2 pl-5">
+          <li>
+            En AWS: <strong>Cognito</strong> → tu user pool → <strong>Users</strong> → el usuario (por email) →{" "}
+            <strong>Edit</strong>.
+          </li>
+          <li>
+            Atributo <code className="rounded bg-slate-100 px-1">custom:role</code> ={" "}
+            <code className="rounded bg-slate-100 px-1">super_admin</code> (o <code className="rounded bg-slate-100 px-1">agency_admin</code>{" "}
+            si gestionas varios tenants).
+          </li>
+          <li>
+            Guarda, luego <strong>cierra sesión</strong> en el dashboard (borra <code className="rounded bg-slate-100 px-1">kv_token</code> en
+            localStorage o vuelve a <Link href="/login" className="font-medium underline">/login</Link>) y entra otra vez para que el{" "}
+            <strong>id token</strong> traiga el rol nuevo.
+          </li>
+        </ol>
+        <p className="mt-3 text-xs text-slate-600">
+          El enlace mágico actual asigna <code className="rounded bg-slate-100 px-1">tenant_admin</code> para un tenant concreto; no promueve a
+          super_admin automáticamente.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export default function SuperDashboardPage() {
@@ -61,10 +101,19 @@ export default function SuperDashboardPage() {
         {loading && <p className="p-6 text-sm text-slate-500">Cargando…</p>}
         {err && (
           <div className="p-6 text-sm text-red-600">
-            <p>{err}</p>
-            <Link href="/login" className="mt-2 inline-block font-medium text-red-800 underline">
-              Ir a /login
-            </Link>
+            {err === "FORBIDDEN_SUPER" ? (
+              <ForbiddenSuperInstructions />
+            ) : (
+              <p>{err}</p>
+            )}
+            <div className="mt-4 flex flex-wrap gap-4">
+              <Link href="/login" className="font-medium text-red-800 underline">
+                Ir a /login
+              </Link>
+              <Link href="/dashboard" className="font-medium text-red-800 underline">
+                Ir al dashboard de tenant
+              </Link>
+            </div>
           </div>
         )}
         {!loading && !err && (
