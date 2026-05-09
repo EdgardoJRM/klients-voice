@@ -21,6 +21,11 @@ Parameters:
     Default: ""
     Description: Verified SES From address for transactional mail (leave empty to skip sends in sandbox/dev)
 
+  AppBaseUrl:
+    Type: String
+    Default: ""
+    Description: Public dashboard URL for magic-link emails (e.g. https://your-app.vercel.app). Set at deploy time; empty disables usable links until set.
+
 Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
@@ -53,7 +58,7 @@ Resources:
   RetryDlq:
     Type: AWS::SQS::Queue
     Properties:
-      FifoQueue: false
+      # Standard queue (default). Do not set FifoQueue:false — SQS rejects that attribute here.
       MessageRetentionPeriod: !Ref RetryQueueRetentionSeconds
 
   RetryQueue:
@@ -217,6 +222,20 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+
+  MagicLinkTokensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   AssetsBucket:
     Type: AWS::S3::Bucket
@@ -494,6 +513,7 @@ Resources:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
         - ALLOW_USER_SRP_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
 
 
 
@@ -525,6 +545,10 @@ Resources:
           TABLE_EMAIL_LOGS: !Ref EmailLogsTable
           S3_BUCKET_ASSETS: !Ref AssetsBucket
           SES_FROM_EMAIL: !Ref SesFromEmail
+          TABLE_MAGIC_LINKS: !Ref MagicLinkTokensTable
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPool
+          COGNITO_CLIENT_ID: !Ref CognitoUserPoolClient
+          MAGIC_LINK_APP_URL: !Ref AppBaseUrl
           TABLE_PRINT_JOBS: !Ref PrintJobsTable
           TABLE_PRINTER_STATIONS: !Ref PrinterStationsTable
           CLICKFUNNELS_WEBHOOK_SECRET: ""
@@ -545,6 +569,17 @@ Resources:
             TableName: !Ref PrintJobsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref PrinterStationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MagicLinkTokensTable
+        - Statement:
+            - Sid: CognitoMagicLink
+              Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminSetUserPassword
+                - cognito-idp:AdminInitiateAuth
+              Resource: !GetAtt CognitoUserPool.Arn
         - Statement:
             - Sid: SesSendRawAndSimple
               Effect: Allow
@@ -591,6 +626,22 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /webhooks/elevenlabs/post-call
             Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        PostAuthMagicLink:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /auth/magic-link
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        PostAuthMagicLinkVerify:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /auth/magic-link/verify
+            Method: POST
             Auth:
               Authorizer: NONE
         PostStationCompletePairing:

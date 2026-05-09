@@ -1,10 +1,13 @@
 version = 0.1
 
-[default]
-[default.deploy]
+[default.build.parameters]
+template = "sam-template.yaml"
+
 [default.deploy.parameters]
+template = "sam-template.yaml"
 stack_name = "klients-voice"
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
 region = "us-east-1"
 confirm_changeset = true
+parameter_overrides = "AppBaseUrl=https://klients-voice-dashboard.vercel.app SesFromEmail=soporte@edgardohernandez.com"

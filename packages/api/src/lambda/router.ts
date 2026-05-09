@@ -36,6 +36,8 @@ import {
   handleStationFailJob,
   handleStationTestPrint,
 } from "../handlers/station/stationJobs";
+import { handleRequestMagicLink } from "../handlers/auth/requestMagicLink";
+import { handleVerifyMagicLink } from "../handlers/auth/verifyMagicLink";
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -85,6 +87,23 @@ async function dispatchStationPublicRoutes(
   return null;
 }
 
+async function dispatchAuthRoutes(
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyStructuredResultV2 | null> {
+  const method = event.requestContext.http.method;
+  const path = event.rawPath;
+
+  if (path === "/auth/magic-link" && method === "POST") {
+    return withCors(await handleRequestMagicLink(event));
+  }
+
+  if (path === "/auth/magic-link/verify" && method === "POST") {
+    return withCors(await handleVerifyMagicLink(event));
+  }
+
+  return null;
+}
+
 export async function publicHandler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -101,6 +120,9 @@ export async function publicHandler(
   if (path === "/webhooks/elevenlabs/post-call" && method === "POST") {
     return withCors(await handleElevenLabsPostCall(event));
   }
+
+  const authEarly = await dispatchAuthRoutes(event);
+  if (authEarly) return authEarly;
 
   const stationEarly = await dispatchStationPublicRoutes(event);
   if (stationEarly) return stationEarly;
@@ -219,6 +241,7 @@ export async function privateHandler(
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> {
   const path = event.rawPath;
   if (path.startsWith("/webhooks/")) return publicHandler(event);
+  if (path.startsWith("/auth/")) return publicHandler(event);
   const station = await dispatchStationPublicRoutes(event);
   if (station) return station;
   return privateHandler(event);

@@ -21,7 +21,7 @@ export default function SuperDashboardPage() {
     const t = typeof window !== "undefined" ? localStorage.getItem("kv_token") : null;
     if (!t) {
       setLoading(false);
-      setErr("Falta token (localStorage kv_token)");
+      setErr("Falta token — ve a /login (Cognito o pega JWT en localStorage kv_token).");
       return;
     }
     void (async () => {
@@ -51,7 +51,14 @@ export default function SuperDashboardPage() {
       </div>
       <div className="mt-10 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         {loading && <p className="p-6 text-sm text-slate-500">Cargando…</p>}
-        {err && <p className="p-6 text-sm text-red-600">{err}</p>}
+        {err && (
+          <div className="p-6 text-sm text-red-600">
+            <p>{err}</p>
+            <Link href="/login" className="mt-2 inline-block font-medium text-red-800 underline">
+              Ir a /login
+            </Link>
+          </div>
+        )}
         {!loading && !err && (
           <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">

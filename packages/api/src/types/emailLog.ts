@@ -11,6 +11,7 @@ export type EmailTemplateId =
   | "webinar_link"
   | "material_access"
   | "post_event"
+  | "magic_link"
   | "custom";
 
 export type EmailLogRecord = {

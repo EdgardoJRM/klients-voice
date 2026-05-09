@@ -23,7 +23,7 @@ export default function TenantDashboardPage() {
       return;
     }
     if (!token) {
-      setErr("Falta kv_token en localStorage");
+      setErr("Falta kv_token — inicia sesión en /login (email/contraseña Cognito o pega JWT).");
       return;
     }
     void (async () => {
@@ -55,7 +55,14 @@ export default function TenantDashboardPage() {
           Vista agencia / super admin
         </Link>
       </div>
-      {err && <p className="mt-8 text-sm text-red-600">{err}</p>}
+      {err && (
+        <div className="mt-8 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <p>{err}</p>
+          <Link href="/login" className="mt-2 inline-block font-medium text-red-900 underline">
+            Ir a iniciar sesión
+          </Link>
+        </div>
+      )}
       <div className="mt-10 grid gap-4 md:grid-cols-2">
         {events.map((ev) => (
           <Link
