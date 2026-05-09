@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Klients Print Bridge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 16px;
+      line-height: 1.45;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    .card {
+      max-width: 640px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 6px 0; }
+    h2 { font-size: 0.95rem; margin: 0 0 10px 0; }
+    label { display: block; margin-top: 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+    input, select {
+      width: 100%;
+      padding: 9px 10px;
+      margin-top: 4px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+    button {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      background: #0f172a;
+      color: #fff;
+    }
+    button.secondary { background: #e2e8f0; color: #0f172a; }
+    button.danger { background: #be123c; color: #fff; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    pre {
+      margin-top: 16px;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 140px;
+      font-size: 11px;
+      white-space: pre-wrap;
+      overflow: auto;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+    .badge.ok { background: #d1fae5; color: #065f46; }
+    .badge.warn { background: #fef3c7; color: #92400e; }
+    .muted { font-size: 13px; color: #475569; margin-bottom: 8px; }
+    table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 10px; }
+    th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #e2e8f0; word-break: break-all; }
+    .hidden { display: none !important; }
+    .dual { opacity: 0.75; font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="screenPair" class="card">
+    <h1>Emparejar estación</h1>
+    <p class="muted">
+      Pega la URL base de la API (misma que usa el dashboard, sin barra final). Luego el código de 6 dígitos que ves en
+      <strong>Configuración → Emparejar Print Bridge</strong>.
+    </p>
+    <label>API URL</label>
+    <input id="pairApiUrl" placeholder="https://xxxx.execute-api....amazonaws.com" />
+    <label>Código de emparejamiento</label>
+    <input id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="123456" />
+    <label>Nombre del dispositivo (opcional)</label>
+    <input id="pairDeviceName" placeholder="Recepción MacBook" />
+    <div class="row">
+      <button type="button" id="btnPair">Completar emparejamiento</button>
+    </div>
+    <p class="dual" id="pairDevHint"></p>
+  </div>
+
+  <div id="screenDash" class="card hidden">
+    <div class="row" style="justify-content: space-between;">
+      <h1 style="margin:0">Print Bridge</h1>
+      <span id="connBadge" class="badge warn">Sin latido</span>
+    </div>
+    <p class="muted" id="dashMeta">—</p>
+    <div class="row">
+      <button type="button" id="btnPrinters">Detectar impresoras (lpstat -p)</button>
+      <select id="printerPick" style="margin-top:0;max-width:280px;"></select>
+    </div>
+    <label style="margin-top:16px">Modo automático</label>
+    <div class="row" style="margin-top:6px;">
+      <label style="margin:0;text-transform:none;font-size:14px;display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="chkAutoPrint" checked />
+        Claim + descargar PDF + lp en bucle
+      </label>
+    </div>
+    <div class="row">
+      <button type="button" id="btnPoll">Iniciar polling</button>
+      <button type="button" class="secondary" id="btnStop">Detener polling</button>
+      <button type="button" class="secondary" id="btnTestPdf">Prueba térmica (PDF mínimo)</button>
+    </div>
+    <button type="button" class="danger" id="btnForget" style="margin-top:14px;background:#64748b">Olvidar emparejamiento</button>
+
+    <h2 style="margin-top:22px">Historial (últimos 20)</h2>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr><th>Hora</th><th>Mensaje</th></tr>
+        </thead>
+        <tbody id="histBody"></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:16px;font-size:12px;text-transform:uppercase;color:#64748b">Registro técnico</h2>
+    <pre id="log"></pre>
+  </div>
+
+  <script>
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
+    const { spawn } = require("child_process");
+
+    const LS_API = "kv_pb_api_url";
+    const LS_TOKEN = "kv_station_token";
+    const LS_STATION = "kv_station_id";
+    const LS_TENANT = "kv_station_tenant_id";
+    const LS_EVENT = "kv_station_event_id";
+    const LS_NAME = "kv_station_display_name";
+
+    const logEl = document.getElementById("log");
+    const histBody = document.getElementById("histBody");
+    const screenPair = document.getElementById("screenPair");
+    const screenDash = document.getElementById("screenDash");
+    const connBadge = document.getElementById("connBadge");
+    const dashMeta = document.getElementById("dashMeta");
+    const pairDevHint = document.getElementById("pairDevHint");
+
+    const hist = [];
+    function pushHist(msg) {
+      const t = new Date().toLocaleTimeString();
+      hist.unshift({ t, msg });
+      if (hist.length > 20) hist.pop();
+      histBody.innerHTML = hist.map((h) => `<tr><td>${h.t}</td><td>${escapeHtml(h.msg)}</td></tr>`).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function log(msg) {
+      const t = new Date().toISOString();
+      logEl.textContent += `[${t}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      pushHist(msg);
+    }
+
+    function runCmd(cmd, args) {
+      return new Promise((resolve, reject) => {
+        const p = spawn(cmd, args);
+        let out = "";
+        let err = "";
+        p.stdout?.on("data", (d) => (out += d.toString()));
+        p.stderr?.on("data", (d) => (err += d.toString()));
+        p.on("error", reject);
+        p.on("close", (code) => {
+          if (code === 0) resolve(out.trim());
+          else reject(new Error(err || `${cmd} exit ${code}`));
+        });
+      });
+    }
+
+    /** JWT dev fallback: env tiene token JWT + event id → usa rutas privadas /print-jobs sin emparejar */
+    function isDevJwtMode() {
+      const t = (process.env.PRINT_BRIDGE_TOKEN ?? "").trim();
+      const ev = (process.env.PRINT_BRIDGE_EVENT_ID ?? "").trim();
+      return !!(t && ev);
+    }
+
+    function normalizeApiUrl(raw) {
+      return String(raw || "")
+        .trim()
+        .replace(/\/$/, "");
+    }
+
+    /** --- Emparejado (station token) --- */
+    function loadStationCfg() {
+      return {
+        apiUrl: normalizeApiUrl(localStorage.getItem(LS_API)),
+        stationToken: (localStorage.getItem(LS_TOKEN) ?? "").trim(),
+        stationId: (localStorage.getItem(LS_STATION) ?? "").trim(),
+        tenantId: (localStorage.getItem(LS_TENANT) ?? "").trim(),
+        eventId: (localStorage.getItem(LS_EVENT) ?? "").trim(),
+        displayName: (localStorage.getItem(LS_NAME) ?? "").trim(),
+      };
+    }
+
+    function saveStationCfg(c) {
+      localStorage.setItem(LS_API, normalizeApiUrl(c.apiUrl));
+      localStorage.setItem(LS_TOKEN, c.stationToken);
+      localStorage.setItem(LS_STATION, c.stationId);
+      localStorage.setItem(LS_TENANT, c.tenantId);
+      localStorage.setItem(LS_EVENT, c.eventId);
+      localStorage.setItem(LS_NAME, c.displayName || "");
+    }
+
+    function showDash() {
+      screenPair.classList.add("hidden");
+      screenDash.classList.remove("hidden");
+      const c = loadStationCfg();
+      if (isDevJwtMode()) {
+        dashMeta.textContent =
+          "Modo dev (PRINT_BRIDGE_TOKEN): JWT + EVENT_ID desde entorno · " +
+          normalizeApiUrl(process.env.PRINT_BRIDGE_API_URL || c.apiUrl);
+      } else {
+        dashMeta.textContent =
+          `${c.displayName || "Estación"} · tenant ${(c.tenantId || "—").slice(0, 8)}… · event ${(c.eventId || "—").slice(0, 8)}… · ${c.apiUrl}`;
+      }
+    }
+
+    function showPairing() {
+      screenDash.classList.add("hidden");
+      screenPair.classList.remove("hidden");
+    }
+
+    document.getElementById("pairApiUrl").value =
+      localStorage.getItem(LS_API) || process.env.PRINT_BRIDGE_API_URL || "";
+
+    if (isDevJwtMode()) {
+      pairDevHint.textContent =
+        "Hay PRINT_BRIDGE_TOKEN y PRINT_BRIDGE_EVENT_ID en el entorno: se usará modo JWT (/print-jobs) sin pantalla de pareja.";
+      showDash();
+      connBadge.className = "badge ok";
+      connBadge.textContent = "JWT dev";
+      log("Dev mode: usando JWT desde variables de entorno.");
+    }
+
+    /** Heartbeat station */
+    let hbTimer = null;
+    function stationHeaders() {
+      const c = loadStationCfg();
+      return {
+        "content-type": "application/json",
+        "x-station-token": c.stationToken,
+      };
+    }
+
+    async function heartbeatOnce() {
+      if (isDevJwtMode()) return;
+      const c = loadStationCfg();
+      if (!c.apiUrl || !c.stationToken) return;
+      try {
+        const printer = document.getElementById("printerPick").value.trim();
+        const r = await fetch(c.apiUrl + "/printer-stations/heartbeat", {
+          method: "POST",
+          headers: stationHeaders(),
+          body: JSON.stringify({
+            assigned_printer_name: printer || undefined,
+            local_app_version: "print-bridge-electron",
+          }),
+        });
+        const j = await r.json();
+        if (r.ok && j.success !== false) {
+          connBadge.className = "badge ok";
+          connBadge.textContent = "Latido OK";
+          return;
+        }
+        throw new Error(j.error?.message || r.statusText);
+      } catch (e) {
+        connBadge.className = "badge warn";
+        connBadge.textContent = "Sin conexión / token";
+        log("Heartbeat error: " + (e.message || e));
+      }
+    }
+
+    function startHeartbeat() {
+      if (hbTimer || isDevJwtMode()) return;
+      void heartbeatOnce();
+      hbTimer = setInterval(() => void heartbeatOnce(), 30000);
+    }
+
+    function stopHeartbeat() {
+      if (hbTimer) clearInterval(hbTimer);
+      hbTimer = null;
+    }
+
+    document.getElementById("btnForget").addEventListener("click", () => {
+      stopHeartbeat();
+      stopPoll();
+      localStorage.removeItem(LS_TOKEN);
+      localStorage.removeItem(LS_STATION);
+      localStorage.removeItem(LS_TENANT);
+      localStorage.removeItem(LS_EVENT);
+      localStorage.removeItem(LS_NAME);
+      log("Credenciales de estación borradas.");
+      showPairing();
+    });
+
+    /** Pair flow */
+    document.getElementById("btnPair").addEventListener("click", async () => {
+      const apiUrl = normalizeApiUrl(document.getElementById("pairApiUrl").value.trim());
+      const code = document.getElementById("pairCode").value.trim();
+      const device = document.getElementById("pairDeviceName").value.trim();
+      if (!apiUrl || !code) {
+        log("Falta API URL o código.");
+        return;
+      }
+      localStorage.setItem(LS_API, apiUrl);
+      try {
+        const r = await fetch(apiUrl + "/printer-stations/complete-pairing", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            pairing_code: code.replace(/\s+/g, ""),
+            device_name: device || undefined,
+            local_app_version: "print-bridge-electron",
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success || !j.data) {
+          throw new Error(j.error?.message || r.statusText);
+        }
+        const d = j.data;
+        saveStationCfg({
+          apiUrl,
+          stationToken: d.station_token,
+          stationId: d.station_id,
+          tenantId: d.tenant_id,
+          eventId: d.event_id,
+          displayName: d.station_name || device || d.station_id,
+        });
+        log("Emparejamiento OK station_id=" + d.station_id);
+        showDash();
+        startHeartbeat();
+      } catch (e) {
+        log("Emparejar falló: " + (e.message || e));
+      }
+    });
+
+    if (!isDevJwtMode()) {
+      const existed = loadStationCfg().stationToken;
+      if (existed) {
+        showDash();
+        startHeartbeat();
+      }
+    }
+
+    /** Printers */
+    document.getElementById("btnPrinters").addEventListener("click", async () => {
+      try {
+        const out = await runCmd("lpstat", ["-p"]);
+        log("lpstat -p OK");
+        const pick = document.getElementById("printerPick");
+        pick.innerHTML = "";
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent = "(predeterminada del sistema)";
+        pick.appendChild(opt0);
+        for (const line of out.split("\n")) {
+          const m = line.match(/^printer\s+(\S+)/i) || line.match(/^impresora\s+(\S+)/iu);
+          if (!m) continue;
+          const opt = document.createElement("option");
+          opt.value = m[1];
+          opt.textContent = m[1];
+          pick.appendChild(opt);
+        }
+        await heartbeatOnce().catch(() => {});
+      } catch (e) {
+        const msg =
+          String(e.message || e).includes("ENOENT") || String(e.message || e).includes("lpstat")
+            ? "No se encontró lpstat/CUPS — instala una impresora o macOS/Linux con CUPS."
+            : String(e.message || e);
+        log("lpstat error: " + msg);
+      }
+    });
+
+    function minimalPdfBuffer() {
+      return Buffer.from("%PDF-1.1\n%\xff\n1 0 obj<<>>endobj trailer<<>>%%EOF\n");
+    }
+
+    document.getElementById("btnTestPdf").addEventListener("click", async () => {
+      try {
+        const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kv-print-"));
+        const file = path.join(dir, "test.pdf");
+        await fs.promises.writeFile(file, minimalPdfBuffer());
+        const printer = document.getElementById("printerPick").value.trim();
+        const args = printer ? ["-d", printer, file] : [file];
+        await runCmd("lp", args);
+        log("Test PDF enviado a lp" + (printer ? " → " + printer : ""));
+      } catch (e) {
+        const m = String(e.message || e);
+        log(m.includes("ENOENT") ? "lp no encontrado en PATH." : "Test lp error: " + m);
+      }
+    });
+
+    /** Poll loop */
+    let pollTimer = null;
+
+    function stopPoll() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      log("Polling detenido.");
+    }
+
+    async function pollOnceStation() {
+      const chk = document.getElementById("chkAutoPrint");
+      if (!chk.checked) return;
+      const cfg = loadStationCfg();
+      if (!cfg.apiUrl || !cfg.stationToken) {
+        log("Falta API o station_token (re-empareja).");
+        return;
+      }
+      const listUrl = cfg.apiUrl + "/station/jobs";
+      const lr = await fetch(listUrl, { headers: stationHeaders() });
+      const lj = await lr.json();
+      if (!lr.ok || lj.success === false) {
+        log("List station jobs falló: " + (lj.error?.message || lr.statusText));
+        return;
+      }
+      const jobs = Array.isArray(lj.data) ? lj.data : [];
+      if (!jobs.length) return;
+      const job = jobs[0];
+      const jobId = job.print_job_id;
+      const stationBody = { station_id: cfg.stationId || undefined };
+      const cr = await fetch(cfg.apiUrl + "/station/jobs/" + encodeURIComponent(jobId) + "/claim", {
+        method: "POST",
+        headers: stationHeaders(),
+        body: JSON.stringify(stationBody),
+      });
+      const cj = await cr.json();
+      if (!cr.ok || cj.success === false || !cj.data) {
+        log("Claim falló " + jobId + ": " + (cj.error?.message || cr.statusText));
+        return;
+      }
+      const labelUrl = cj.data.label_url;
+      if (!labelUrl) {
+        log("Job sin label_url: " + jobId);
+        await fetch(cfg.apiUrl + "/station/jobs/" + encodeURIComponent(jobId) + "/fail", {
+          method: "POST",
+          headers: stationHeaders(),
+          body: JSON.stringify({ error_message: "Missing label_url after claim" }),
+        });
+        return;
+      }
+      const pdfRes = await fetch(labelUrl);
+      if (!pdfRes.ok) {
+        log("Descarga PDF falló HTTP " + pdfRes.status);
+        await fetch(cfg.apiUrl + "/station/jobs/" + encodeURIComponent(jobId) + "/fail", {
+          method: "POST",
+          headers: stationHeaders(),
+          body: JSON.stringify({ error_message: "Download PDF failed http " + pdfRes.status }),
+        });
+        return;
+      }
+      const buf = Buffer.from(await pdfRes.arrayBuffer());
+      const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kv-label-"));
+      const outfile = path.join(dir, jobId + ".pdf");
+      await fs.promises.writeFile(outfile, buf);
+      try {
+        const printer = document.getElementById("printerPick").value.trim();
+        const args = printer ? ["-d", printer, outfile] : [outfile];
+        await runCmd("lp", args);
+      } catch (e) {
+        log("lp error: " + (e.message || e));
+        await fetch(cfg.apiUrl + "/station/jobs/" + encodeURIComponent(jobId) + "/fail", {
+          method: "POST",
+          headers: stationHeaders(),
+          body: JSON.stringify({ error_message: String(e.message || e).slice(0, 1900) }),
+        });
+        return;
+      }
+      await fetch(cfg.apiUrl + "/station/jobs/" + encodeURIComponent(jobId) + "/complete", {
+        method: "POST",
+        headers: stationHeaders(),
+        body: "{}",
+      });
+      log("Impreso OK " + jobId);
+    }
+
+    async function pollOnceJwt() {
+      const chk = document.getElementById("chkAutoPrint");
+      if (!chk.checked) return;
+      const apiUrl = normalizeApiUrl(process.env.PRINT_BRIDGE_API_URL || "");
+      const token = (process.env.PRINT_BRIDGE_TOKEN ?? "").trim();
+      const eventId = (process.env.PRINT_BRIDGE_EVENT_ID ?? "").trim();
+      const stationIdRaw = (process.env.PRINT_BRIDGE_STATION_ID ?? "").trim();
+      if (!apiUrl || !token || !eventId) {
+        log("Dev JWT: falta API, token o event id (env o campos en pantalla pareja).");
+        return;
+      }
+      const stationQ = stationIdRaw ? "&station_id=" + encodeURIComponent(stationIdRaw) : "";
+      const listUrl = apiUrl + "/print-jobs?event_id=" + encodeURIComponent(eventId) + stationQ;
+      const lr = await fetch(listUrl, { headers: { authorization: "Bearer " + token } });
+      const lj = await lr.json();
+      if (!lr.ok || !lj.success) {
+        log("List JWT falló: " + (lj.error?.message || lr.statusText));
+        return;
+      }
+      const jobs = Array.isArray(lj.data) ? lj.data : [];
+      if (!jobs.length) return;
+      const job = jobs[0];
+      const jobId = job.print_job_id;
+      const stationBody = {};
+      if (stationIdRaw) stationBody.station_id = stationIdRaw;
+      const cr = await fetch(apiUrl + "/print-jobs/" + encodeURIComponent(jobId) + "/claim", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer " + token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(stationBody),
+      });
+      const cj = await cr.json();
+      if (!cr.ok || !cj.success || !cj.data) {
+        log("Claim JWT falló: " + (cj.error?.message || cr.statusText));
+        return;
+      }
+      const labelUrl = cj.data.label_url;
+      if (!labelUrl) {
+        log("Job sin label_url: " + jobId);
+        return;
+      }
+      const pdfRes = await fetch(labelUrl);
+      if (!pdfRes.ok) {
+        log("Descarga PDF falló " + pdfRes.status);
+        await fetch(apiUrl + "/print-jobs/" + encodeURIComponent(jobId) + "/fail", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer " + token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ error_message: "Download PDF failed http " + pdfRes.status }),
+        });
+        return;
+      }
+      const buf = Buffer.from(await pdfRes.arrayBuffer());
+      const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kv-label-"));
+      const outfile = path.join(dir, jobId + ".pdf");
+      await fs.promises.writeFile(outfile, buf);
+      try {
+        const printer = document.getElementById("printerPick").value.trim();
+        const args = printer ? ["-d", printer, outfile] : [outfile];
+        await runCmd("lp", args);
+      } catch (e) {
+        log("lp error: " + (e.message || e));
+        await fetch(apiUrl + "/print-jobs/" + encodeURIComponent(jobId) + "/fail", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer " + token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ error_message: String(e.message || e).slice(0, 1900) }),
+        });
+        return;
+      }
+      await fetch(apiUrl + "/print-jobs/" + encodeURIComponent(jobId) + "/complete", {
+        method: "POST",
+        headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+        body: "{}",
+      });
+      log("Impreso OK (JWT) " + jobId);
+    }
+
+    async function pollOnce() {
+      try {
+        if (isDevJwtMode()) await pollOnceJwt();
+        else await pollOnceStation();
+      } catch (e) {
+        log("pollOnce: " + (e.message || e));
+      }
+    }
+
+    document.getElementById("btnPoll").addEventListener("click", () => {
+      if (pollTimer) return;
+      log("Polling cada 6s…");
+      void pollOnce();
+      pollTimer = setInterval(() => void pollOnce(), 6000);
+    });
+
+    document.getElementById("btnStop").addEventListener("click", () => {
+      stopPoll();
+    });
+  </script>
+</body>
+</html>

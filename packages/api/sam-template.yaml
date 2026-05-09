@@ -1,0 +1,1004 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Klients Events API — multi-tenant events, QR, SES, webhooks & dashboard backend
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [arm64]
+
+Parameters:
+  DefaultPhoneRegion:
+    Type: String
+    Default: US
+  RetryQueueRetentionSeconds:
+    Type: Number
+    Default: 1209600
+  SesFromEmail:
+    Type: String
+    Default: ""
+    Description: Verified SES From address for transactional mail (leave empty to skip sends in sandbox/dev)
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowHeaders:
+          - authorization
+          - content-type
+          - x-klients-signature
+          - x-webhook-secret
+          - elevenlabs-signature
+          - x-station-token
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - OPTIONS
+        AllowOrigins:
+          - "*"
+      Auth:
+        DefaultAuthorizer: CognitoJwt
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              Audience:
+                - !Ref CognitoUserPoolClient
+              Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+
+  RetryDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: false
+      MessageRetentionPeriod: !Ref RetryQueueRetentionSeconds
+
+  RetryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RetryDlq.Arn
+        maxReceiveCount: 5
+
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: tenant_slug
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: SlugIndex
+          KeySchema:
+            - AttributeName: tenant_slug
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantEmailIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: email
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: event_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: tenant_date_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: event_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantDateIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: tenant_date_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ParticipantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: participant_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+        - AttributeName: email_normalized
+          AttributeType: S
+        - AttributeName: normalized_phone
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: qr_token
+          AttributeType: S
+      KeySchema:
+        - AttributeName: participant_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: QrTokenIndex
+          KeySchema:
+            - AttributeName: qr_token
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: EventIndex
+          KeySchema:
+            - AttributeName: event_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: EventEmailIndex
+          KeySchema:
+            - AttributeName: event_id
+              KeyType: HASH
+            - AttributeName: email_normalized
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: EventPhoneIndex
+          KeySchema:
+            - AttributeName: event_id
+              KeyType: HASH
+            - AttributeName: normalized_phone
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TenantParticipantIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: participant_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  EmailLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email_log_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email_log_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantCreatedIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  MaterialsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: material_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: material_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EventMaterialIndex
+          KeySchema:
+            - AttributeName: event_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  MaterialAccessTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: access_id
+          AttributeType: S
+        - AttributeName: participant_id
+          AttributeType: S
+        - AttributeName: material_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: access_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ParticipantMaterialIndex
+          KeySchema:
+            - AttributeName: participant_id
+              KeyType: HASH
+            - AttributeName: material_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  PrintJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: print_job_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+        - AttributeName: evt_queue_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: print_job_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EventQueueIndex
+          KeySchema:
+            - AttributeName: event_id
+              KeyType: HASH
+            - AttributeName: evt_queue_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  PrinterStationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: station_id
+          AttributeType: S
+        - AttributeName: tenant_event_sk
+          AttributeType: S
+        - AttributeName: pairing_code_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: station_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: PairingCodeHashIndex
+          KeySchema:
+            - AttributeName: pairing_code_hash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TenantEventStationIndex
+          KeySchema:
+            - AttributeName: tenant_event_sk
+              KeyType: HASH
+            - AttributeName: station_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  LabelTemplatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: label_template_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: label_template_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantTemplatesIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: label_template_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  CallLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: call_log_id
+          AttributeType: S
+        - AttributeName: participant_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+        - AttributeName: elevenlabs_conversation_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: call_log_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ParticipantIndex
+          KeySchema:
+            - AttributeName: participant_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ConversationIndex
+          KeySchema:
+            - AttributeName: elevenlabs_conversation_id
+              KeyType: HASH
+            - AttributeName: call_log_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TenantCallIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  IntegrationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: integration_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: provider
+          AttributeType: S
+      KeySchema:
+        - AttributeName: integration_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantProviderIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: provider
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  PhoneNumbersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: phone_number_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: phone_number_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantPhoneIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: phone_number_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AgentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: agent_config_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: agent_config_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TenantAgentIndex
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: agent_config_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: klients-voice-pool
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Schema:
+        - Name: tenant_id
+          Mutable: true
+          AttributeDataType: String
+        - Name: role
+          Mutable: true
+          AttributeDataType: String
+          StringAttributeConstraints:
+            MinLength: "1"
+            MaxLength: "32"
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: CognitoUserPool
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientName: klients-events-app
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+
+
+
+  PublicApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/entry/publicApi.ts]
+        Bundle: true
+        Minify: false
+        Sourcemap: false
+        External: []
+        Format: cjs
+        Target: node20
+    Properties:
+      CodeUri: .
+      Handler: src/entry/publicApi.handler
+      Environment:
+        Variables:
+          TABLE_TENANTS: !Ref TenantsTable
+          TABLE_USERS: !Ref UsersTable
+          TABLE_EVENTS: !Ref EventsTable
+          TABLE_PARTICIPANTS: !Ref ParticipantsTable
+          TABLE_CALL_LOGS: !Ref CallLogsTable
+          TABLE_INTEGRATIONS: !Ref IntegrationsTable
+          TABLE_PHONE_NUMBERS: !Ref PhoneNumbersTable
+          TABLE_AGENTS: !Ref AgentsTable
+          TABLE_EMAIL_LOGS: !Ref EmailLogsTable
+          S3_BUCKET_ASSETS: !Ref AssetsBucket
+          SES_FROM_EMAIL: !Ref SesFromEmail
+          TABLE_PRINT_JOBS: !Ref PrintJobsTable
+          TABLE_PRINTER_STATIONS: !Ref PrinterStationsTable
+          CLICKFUNNELS_WEBHOOK_SECRET: ""
+          ELEVENLABS_WEBHOOK_SECRET: ""
+          DEFAULT_PHONE_REGION: !Ref DefaultPhoneRegion
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TenantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EventsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ParticipantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CallLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EmailLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PrintJobsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PrinterStationsTable
+        - Statement:
+            - Sid: SesSendRawAndSimple
+              Effect: Allow
+              Action:
+                - ses:SendRawEmail
+                - ses:SendEmail
+              Resource: "*"
+            - Sid: PrivateAssetsQrPrefix
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource:
+                - !Sub "${AssetsBucket.Arn}/qr-codes/*"
+                - !Sub "${AssetsBucket.Arn}/labels/*"
+      Events:
+        CfHook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /webhooks/clickfunnels/{tenant_slug}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        ElHook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /webhooks/elevenlabs/post-call
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        CfOptions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /webhooks/clickfunnels/{tenant_slug}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        ElOptions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /webhooks/elevenlabs/post-call
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        PostStationCompletePairing:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /printer-stations/complete-pairing
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        PostStationHeartbeat:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /printer-stations/heartbeat
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        GetStationJobs:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /station/jobs
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        PostStationTestPrint:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /station/jobs/test-print
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        PostStationClaimJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /station/jobs/{job_id}/claim
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        PostStationCompleteJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /station/jobs/{job_id}/complete
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        PostStationFailJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /station/jobs/{job_id}/fail
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  PrivateApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/entry/privateApi.ts]
+        Bundle: true
+        Format: cjs
+        Target: node20
+    Properties:
+      CodeUri: .
+      Handler: src/entry/privateApi.handler
+      Environment:
+        Variables:
+          TABLE_TENANTS: !Ref TenantsTable
+          TABLE_USERS: !Ref UsersTable
+          TABLE_EVENTS: !Ref EventsTable
+          TABLE_PARTICIPANTS: !Ref ParticipantsTable
+          TABLE_CALL_LOGS: !Ref CallLogsTable
+          TABLE_INTEGRATIONS: !Ref IntegrationsTable
+          TABLE_PHONE_NUMBERS: !Ref PhoneNumbersTable
+          TABLE_AGENTS: !Ref AgentsTable
+          TABLE_EMAIL_LOGS: !Ref EmailLogsTable
+          TABLE_MATERIALS: !Ref MaterialsTable
+          TABLE_MATERIAL_ACCESS: !Ref MaterialAccessTable
+          TABLE_PRINT_JOBS: !Ref PrintJobsTable
+          TABLE_PRINTER_STATIONS: !Ref PrinterStationsTable
+          TABLE_LABEL_TEMPLATES: !Ref LabelTemplatesTable
+          S3_BUCKET_ASSETS: !Ref AssetsBucket
+          SES_FROM_EMAIL: !Ref SesFromEmail
+          SQS_RETRY_QUEUE_URL: !Ref RetryQueue
+          SECRET_ELEVENLABS_ARN: ""
+          SECRET_TWILIO_ARN: ""
+          DEFAULT_PHONE_REGION: !Ref DefaultPhoneRegion
+          COGNITO_ISSUER: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+          COGNITO_AUDIENCE: !Ref CognitoUserPoolClient
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TenantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EventsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ParticipantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CallLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IntegrationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PhoneNumbersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AgentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EmailLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MaterialsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MaterialAccessTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PrintJobsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PrinterStationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LabelTemplatesTable
+        - Statement:
+            - Sid: SesTransactional
+              Effect: Allow
+              Action:
+                - ses:SendRawEmail
+                - ses:SendEmail
+              Resource: "*"
+            - Sid: AssetsBucketManagedPrefixes
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource:
+                - !Sub "${AssetsBucket.Arn}/qr-codes/*"
+                - !Sub "${AssetsBucket.Arn}/materials/*"
+                - !Sub "${AssetsBucket.Arn}/labels/*"
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt RetryQueue.QueueName
+      Events:
+        PostTenants:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /tenants
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetTenants:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /tenants
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PostEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        GetEventById:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PatchEventById:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}
+            Method: PATCH
+            Auth:
+              Authorizer: CognitoJwt
+        PostPrinterStationPairCode:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /printer-stations/pair-code
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetParticipants:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}/participants
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PostScannerValidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /scanner/validate
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostCreateMaterial:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /materials
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetEventMaterials:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}/materials
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        GetParticipantMaterials:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /participants/{participant_id}/materials
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PostMaterialGrantAccess:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /materials/{material_id}/grant-access
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostMaterialSignedUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /materials/{material_id}/signed-url
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostMaterialAsset:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /materials/{material_id}/asset
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetPrintJobs:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /print-jobs
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PostTestPrint:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /print-jobs/test-print
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostClaimPrintJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /print-jobs/{job_id}/claim
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostCompletePrintJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /print-jobs/{job_id}/complete
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostFailPrintJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /print-jobs/{job_id}/fail
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostParticipantResendQr:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}/participants/{participant_id}/resend-qr
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostParticipantMaterialAccess:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}/participants/{participant_id}/material-access
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        GetEventAnalytics:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{event_id}/analytics
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        GetTenantAnalytics:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /analytics/{tenant_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+        PostCallsStart:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /calls/start
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+        PostCallsRetry:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /calls/retry
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+  RetryConsumerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/lambda/retryWorker.ts]
+        Bundle: true
+        Format: cjs
+        Target: node20
+    Properties:
+      CodeUri: .
+      Handler: src/lambda/retryWorker.handler
+      Environment:
+        Variables:
+          TABLE_TENANTS: !Ref TenantsTable
+          TABLE_USERS: !Ref UsersTable
+          TABLE_EVENTS: !Ref EventsTable
+          TABLE_PARTICIPANTS: !Ref ParticipantsTable
+          TABLE_CALL_LOGS: !Ref CallLogsTable
+          TABLE_INTEGRATIONS: !Ref IntegrationsTable
+          TABLE_PHONE_NUMBERS: !Ref PhoneNumbersTable
+          TABLE_AGENTS: !Ref AgentsTable
+          SECRET_ELEVENLABS_ARN: ""
+          SECRET_TWILIO_ARN: ""
+          DEFAULT_PHONE_REGION: !Ref DefaultPhoneRegion
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TenantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EventsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ParticipantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CallLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AgentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PhoneNumbersTable
+      Events:
+        RetryQueueSubscription:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RetryQueue.Arn
+            BatchSize: 5
+
+Outputs:
+  HttpApiUrl:
+    Description: Invoke URL root
+    Value: !GetAtt HttpApi.ApiEndpoint
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  CognitoUserPoolClientId:
+    Value: !Ref CognitoUserPoolClient
+  RetryQueueUrl:
+    Value: !Ref RetryQueue
+  AssetsBucketName:
+    Description: Private bucket for QR images, labels (Phase 4), materials (Phase 3)
+    Value: !Ref AssetsBucket
+  EmailLogsTableName:
+    Value: !Ref EmailLogsTable

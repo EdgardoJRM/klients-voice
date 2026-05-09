@@ -1,0 +1,24 @@
+{
+  "type": "post_call_transcription",
+  "event_timestamp": 1739537297,
+  "data": {
+    "agent_id": "agent_x",
+    "conversation_id": "conv_confirmed",
+    "transcript": [
+      { "role": "agent", "message": "Hola...", "time_in_call_secs": 0 },
+      { "role": "user", "message": "Sí voy a asistir", "time_in_call_secs": 5 }
+    ],
+    "metadata": { "call_duration_secs": 40, "termination_reason": "hangup" },
+    "analysis": {
+      "call_successful": "success",
+      "transcript_summary": "Confirmed attendance for webinar. User agreed to join."
+    },
+    "conversation_initiation_client_data": {
+      "dynamic_variables": {
+        "tenant_id": "00000000-0000-4000-8000-000000000010",
+        "event_id": "00000000-0000-4000-8000-000000000011",
+        "participant_id": "00000000-0000-4000-8000-000000000012"
+      }
+    }
+  }
+}

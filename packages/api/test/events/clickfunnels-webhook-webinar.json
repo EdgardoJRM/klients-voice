@@ -1,0 +1,12 @@
+{
+  "full_name": "María Rivera",
+  "email": "maria@example.com",
+  "phone": "7875550100",
+  "event_id": "00000000-0000-0000-0000-000000000001",
+  "event_title": "Webinar Finanzas 90 Días",
+  "event_type": "webinar",
+  "event_date": "2026-06-15",
+  "event_time": "7:00 PM",
+  "webinar_url": "https://zoom.us/j/123456789",
+  "consent_voice": "true"
+}

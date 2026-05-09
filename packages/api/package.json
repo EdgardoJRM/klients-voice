@@ -1,0 +1,31 @@
+{
+  "name": "api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "seed:dev": "node scripts/seed/seed-sample.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.716.0",
+    "@aws-sdk/client-s3": "^3.716.0",
+    "@aws-sdk/client-secrets-manager": "^3.716.0",
+    "@aws-sdk/client-ses": "^3.716.0",
+    "@aws-sdk/client-sqs": "^3.716.0",
+    "@aws-sdk/lib-dynamodb": "^3.716.0",
+    "@aws-sdk/s3-request-presigner": "^3.716.0",
+    "esbuild": "^0.25.4",
+    "pdfkit": "^0.18.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^20.11.30",
+    "@types/pdfkit": "^0.17.6",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.6.3"
+  }
+}

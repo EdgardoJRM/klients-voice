@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.next/
+.aws-sam/
+dist/
+coverage/
+*.log
+.DS_Store
+.vercel
+*.tsbuildinfo
+

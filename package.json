@@ -1,0 +1,18 @@
+{
+  "name": "klients-voice",
+  "private": true,
+  "workspaces": [
+    "packages/api",
+    "packages/dashboard",
+    "packages/print-bridge"
+  ],
+  "scripts": {
+    "build:api": "npm run build -w api",
+    "build:dashboard": "npm run build -w @klients-voice/dashboard",
+    "lint:api": "npm run typecheck -w api",
+    "typecheck": "npm run typecheck --workspace=api"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

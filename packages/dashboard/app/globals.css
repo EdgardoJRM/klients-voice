@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --brand: 222 47% 15%;
+  --brand-fg: 210 20% 98%;
+  --bg: 220 33% 98%;
+  --card: 0 0% 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}

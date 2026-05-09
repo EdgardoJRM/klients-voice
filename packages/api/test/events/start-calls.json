@@ -1,0 +1,7 @@
+{
+  "tenant_id": "00000000-0000-4000-8000-000000000010",
+  "event_id": "00000000-0000-4000-8000-000000000011",
+  "call_type": "confirmation",
+  "filter": "all_pending",
+  "participant_ids": []
+}

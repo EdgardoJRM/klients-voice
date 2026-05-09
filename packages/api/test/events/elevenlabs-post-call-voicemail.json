@@ -1,0 +1,18 @@
+{
+  "type": "post_call_transcription",
+  "data": {
+    "conversation_id": "conv_vm",
+    "transcript": [{ "role": "agent", "message": "Deje un mensaje tras el tono...", "time_in_call_secs": 0 }],
+    "metadata": { "call_duration_secs": 12 },
+    "analysis": {
+      "transcript_summary": "Reached voicemail greeting; no human response."
+    },
+    "conversation_initiation_client_data": {
+      "dynamic_variables": {
+        "tenant_id": "00000000-0000-4000-8000-000000000010",
+        "event_id": "00000000-0000-4000-8000-000000000011",
+        "participant_id": "00000000-0000-4000-8000-000000000012"
+      }
+    }
+  }
+}

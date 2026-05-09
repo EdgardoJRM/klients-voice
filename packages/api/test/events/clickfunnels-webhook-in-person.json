@@ -1,0 +1,11 @@
+{
+  "full_name": "Carlos Hernández",
+  "email": "carlos@example.com",
+  "phone": "(787) 555-0199",
+  "event_title": "Taller de Marketing Local",
+  "event_type": "in_person",
+  "event_date": "2026-05-21",
+  "event_time": "10:00 AM",
+  "location_name": "Centro Convenciones",
+  "consent_voice": true
+}

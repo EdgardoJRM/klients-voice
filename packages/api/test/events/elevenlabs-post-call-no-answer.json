@@ -1,0 +1,18 @@
+{
+  "type": "post_call_transcription",
+  "data": {
+    "conversation_id": "conv_na",
+    "transcript": [],
+    "metadata": { "call_duration_secs": 0, "termination_reason": "no_answer" },
+    "analysis": {
+      "transcript_summary": "No response from callee."
+    },
+    "conversation_initiation_client_data": {
+      "dynamic_variables": {
+        "tenant_id": "00000000-0000-4000-8000-000000000010",
+        "event_id": "00000000-0000-4000-8000-000000000011",
+        "participant_id": "00000000-0000-4000-8000-000000000012"
+      }
+    }
+  }
+}

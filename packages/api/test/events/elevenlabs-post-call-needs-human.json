@@ -1,0 +1,24 @@
+{
+  "type": "post_call_transcription",
+  "data": {
+    "conversation_id": "conv_human",
+    "transcript": [
+      {
+        "role": "user",
+        "message": "Necesito hablar con un supervisor sobre un cargo",
+        "time_in_call_secs": 3
+      }
+    ],
+    "metadata": { "call_duration_secs": 25 },
+    "analysis": {
+      "transcript_summary": "User requested human supervisor; needs_human_followup."
+    },
+    "conversation_initiation_client_data": {
+      "dynamic_variables": {
+        "tenant_id": "00000000-0000-4000-8000-000000000010",
+        "event_id": "00000000-0000-4000-8000-000000000011",
+        "participant_id": "00000000-0000-4000-8000-000000000012"
+      }
+    }
+  }
+}
