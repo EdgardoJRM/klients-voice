@@ -12,6 +12,14 @@ type TenantRow = {
   plan: string;
 };
 
+function formatListTenantsError(json: { error?: { message?: string; code?: string } }): string {
+  const message = json.error?.message ?? "";
+  if (message === "Forbidden" || json.error?.code === "FORBIDDEN") {
+    return "Necesitas rol super_admin (o agency_admin) en Cognito para ver todos los tenants; el dashboard de tenant está en /dashboard.";
+  }
+  return typeof message === "string" && message.length > 0 ? message : "Error API";
+}
+
 export default function SuperDashboardPage() {
   const [rows, setRows] = useState<TenantRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +36,7 @@ export default function SuperDashboardPage() {
       try {
         const res = await apiFetch("/tenants", { method: "GET", token: t });
         const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(json.error?.message ?? "Error API");
+        if (!res.ok || !json.success) throw new Error(formatListTenantsError(json));
         setRows(json.data as TenantRow[]);
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Error");

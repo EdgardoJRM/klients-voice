@@ -5,6 +5,7 @@ import {
   AdminCreateUserCommand,
   AdminSetUserPasswordCommand,
   AdminInitiateAuthCommand,
+  AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { readEnv } from "../config/env";
@@ -73,7 +74,11 @@ function oneTimePassword(): string {
   return chars.join("");
 }
 
-export async function requestMagicLinkForEmail(email: string, appBaseUrl: string): Promise<void> {
+export async function requestMagicLinkForEmail(
+  email: string,
+  appBaseUrl: string,
+  opts?: { tenantId?: string },
+): Promise<void> {
   const normalized = email.trim().toLowerCase();
   if (!normalized || !normalized.includes("@")) {
     throw new ValidationError("Invalid email");
@@ -92,6 +97,15 @@ export async function requestMagicLinkForEmail(email: string, appBaseUrl: string
       code: "SES_NOT_CONFIGURED",
     });
   }
+
+  const resolveTenantId = (): string | undefined => {
+    const fromClient = opts?.tenantId?.trim();
+    if (fromClient) return fromClient;
+    const fromEnv = process.env.MAGIC_LINK_DEFAULT_TENANT_ID?.trim();
+    return fromEnv || undefined;
+  };
+
+  const tenantIdToBind = resolveTenantId();
 
   const client = cip();
   const userPoolId = poolId();
@@ -120,6 +134,19 @@ export async function requestMagicLinkForEmail(email: string, appBaseUrl: string
     } else {
       throw e;
     }
+  }
+
+  if (tenantIdToBind) {
+    await client.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: userPoolId,
+        Username: normalized,
+        UserAttributes: [
+          { Name: "custom:tenant_id", Value: tenantIdToBind },
+          { Name: "custom:role", Value: "tenant_admin" },
+        ],
+      }),
+    );
   }
 
   const password = oneTimePassword();

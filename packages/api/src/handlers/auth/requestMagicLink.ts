@@ -5,7 +5,12 @@ import { ok, fail, parseJsonBody } from "../../utils/response";
 import { AppError, ValidationError } from "../../utils/errors";
 import { parseSchema } from "../../utils/validation";
 
-const schema = z.object({ email: z.string().email() }).strict();
+const schema = z
+  .object({
+    email: z.string().email(),
+    tenant_id: z.string().uuid().optional(),
+  })
+  .strict();
 
 /** Convierte errores típicos de Cognito/SES en respuestas HTTP con mensaje legible. */
 function mapMagicLinkFailure(err: unknown): unknown {
@@ -51,12 +56,12 @@ export async function handleRequestMagicLink(
 ): Promise<APIGatewayProxyStructuredResultV2> {
   try {
     const body = parseJsonBody(event);
-    const { email } = parseSchema(schema, body);
+    const { email, tenant_id } = parseSchema(schema, body);
     const appBase =
       process.env.MAGIC_LINK_APP_URL?.trim() ||
       process.env.APP_BASE_URL?.trim() ||
       "";
-    await requestMagicLinkForEmail(email, appBase);
+    await requestMagicLinkForEmail(email, appBase, { tenantId: tenant_id });
     return ok({ sent: true });
   } catch (e) {
     return fail(mapMagicLinkFailure(e));

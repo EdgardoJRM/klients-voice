@@ -11,6 +11,19 @@ type EventRow = {
   date: string;
 };
 
+function formatApiError(apiMessage: unknown, json: { error?: { code?: string } }): string {
+  const m =
+    typeof apiMessage === "string"
+      ? apiMessage
+      : json.error?.code === "FORBIDDEN"
+        ? "Forbidden"
+        : "Error";
+  if (m === "Forbidden" || json.error?.code === "FORBIDDEN") {
+    return "Acceso denegado: tu token no tiene rol/tenant para este tenant. Define NEXT_PUBLIC_KV_TENANT_ID en Vercel, vuelve a solicitar el enlace mágico desde /login y abre el enlace del correo (así Cognito guarda custom:tenant_id). Si usas solo contraseña, un admin debe asignarte custom:role y custom:tenant_id en Cognito.";
+  }
+  return m;
+}
+
 export default function TenantDashboardPage() {
   const tenantId = process.env.NEXT_PUBLIC_KV_TENANT_ID ?? "";
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -33,7 +46,7 @@ export default function TenantDashboardPage() {
           token,
         });
         const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(json.error?.message ?? "Error");
+        if (!res.ok || !json.success) throw new Error(formatApiError(json.error?.message, json));
         setEvents(json.data as EventRow[]);
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Error");

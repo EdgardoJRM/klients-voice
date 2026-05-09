@@ -11,6 +11,15 @@ import {
   signInWithSrp,
 } from "../../lib/cognitoSrp";
 
+/** UUID público del tenant para el dashboard; se envía con el magic link para fijar custom:tenant_id en Cognito */
+const TENANT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function optionalDashboardTenantId(): string | undefined {
+  const raw = process.env.NEXT_PUBLIC_KV_TENANT_ID?.trim() ?? "";
+  if (!raw || raw.includes("tu-tenant") || raw.includes("<")) return undefined;
+  return TENANT_UUID_RE.test(raw) ? raw.toLowerCase() : undefined;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const isProduction = process.env.NODE_ENV === "production";
@@ -23,6 +32,7 @@ export default function LoginPage() {
   );
 
   const apiConfigured = useMemo(() => apiBaseUrl().length > 0, []);
+  const magicLinkTenantId = useMemo(() => optionalDashboardTenantId(), []);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -84,7 +94,10 @@ export default function LoginPage() {
     try {
       const res = await apiFetch("/auth/magic-link", {
         method: "POST",
-        body: JSON.stringify({ email: addr }),
+        body: JSON.stringify({
+          email: addr,
+          ...(magicLinkTenantId ? { tenant_id: magicLinkTenantId } : {}),
+        }),
       });
       const text = await res.text();
       let raw: unknown;
@@ -143,6 +156,19 @@ export default function LoginPage() {
           <p className="text-xs text-slate-600">
             Te enviamos un correo con un enlace a <code className="rounded bg-slate-100 px-1">/login/magic?t=…</code> que completa el
             acceso.
+            {magicLinkTenantId ? (
+              <>
+                {" "}
+                Con tu <code className="rounded bg-slate-100 px-1">NEXT_PUBLIC_KV_TENANT_ID</code> configurado, también asignamos el
+                tenant en Cognito (evitas <strong>Forbidden</strong> en /dashboard).
+              </>
+            ) : (
+              <>
+                {" "}
+                Sin <code className="rounded bg-slate-100 px-1">NEXT_PUBLIC_KV_TENANT_ID</code> válido en Vercel, el JWT puede llegar sin
+                tenant y verás <strong>Forbidden</strong> al cargar eventos — configura el UUID del tenant en build.
+              </>
+            )}
           </p>
           <label className="block text-xs font-medium uppercase tracking-wide text-slate-500">Email</label>
           <input
