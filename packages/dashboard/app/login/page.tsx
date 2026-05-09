@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { apiFetch } from "../../lib/api";
+import { apiFetch, apiBaseUrl } from "../../lib/api";
 import {
   createCognitoUserPool,
   idTokenJwt,
@@ -22,7 +22,7 @@ export default function LoginPage() {
     [cognitoConfig],
   );
 
-  const apiConfigured = useMemo(() => (process.env.NEXT_PUBLIC_API_URL ?? "").trim().length > 0, []);
+  const apiConfigured = useMemo(() => apiBaseUrl().length > 0, []);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -86,7 +86,18 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email: addr }),
       });
-      const raw = await res.json();
+      const text = await res.text();
+      let raw: unknown;
+      try {
+        raw = text ? JSON.parse(text) : {};
+      } catch {
+        setMsg(
+          res.status === 500 && text.includes("<!DOCTYPE")
+            ? "Respuesta incorrecta del servidor (HTML). Comprueba en Vercel que NEXT_PUBLIC_API_URL sea exactamente https://…execute-api.us-east-1.amazonaws.com sin barra final."
+            : `Error ${res.status}: ${text.slice(0, 200)}`,
+        );
+        return;
+      }
       const json = raw as { success?: boolean; error?: { message?: string; code?: string }; message?: string };
       if ("success" in json && json.success === true) {
         setOkMagic("Revisa tu correo: te enviamos un enlace (válido unos 15 minutos).");
