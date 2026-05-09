@@ -4,7 +4,7 @@ version = 0.1
 template = "sam-template.yaml"
 
 [default.deploy.parameters]
-template = "sam-template.yaml"
+template = ".aws-sam/build/template.yaml"
 stack_name = "klients-voice"
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM"

@@ -531,7 +531,7 @@ Resources:
         Target: node20
     Properties:
       CodeUri: .
-      Handler: src/entry/publicApi.handler
+      Handler: publicApi.handler
       Environment:
         Variables:
           TABLE_TENANTS: !Ref TenantsTable
@@ -712,7 +712,7 @@ Resources:
         Target: node20
     Properties:
       CodeUri: .
-      Handler: src/entry/privateApi.handler
+      Handler: privateApi.handler
       Environment:
         Variables:
           TABLE_TENANTS: !Ref TenantsTable
@@ -1004,7 +1004,7 @@ Resources:
         Target: node20
     Properties:
       CodeUri: .
-      Handler: src/lambda/retryWorker.handler
+      Handler: retryWorker.handler
       Environment:
         Variables:
           TABLE_TENANTS: !Ref TenantsTable

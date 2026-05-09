@@ -86,15 +86,25 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email: addr }),
       });
-      const json = (await res.json()) as
-        | { success: true }
-        | { success: false; error?: { message?: string } };
-      if (!res.ok || !json.success) {
-        const m = !json.success && json.error?.message ? json.error.message : "No se pudo enviar el enlace.";
-        setMsg(m);
+      const raw = await res.json();
+      const json = raw as { success?: boolean; error?: { message?: string; code?: string }; message?: string };
+      if ("success" in json && json.success === true) {
+        setOkMagic("Revisa tu correo: te enviamos un enlace (válido unos 15 minutos).");
         return;
       }
-      setOkMagic("Revisa tu correo: te enviamos un enlace (válido unos 15 minutos).");
+      if (!res.ok) {
+        const apiMsg =
+          json.error?.message ??
+          (typeof json.message === "string" ? json.message : null) ??
+          `Error HTTP ${res.status}`;
+        setMsg(apiMsg);
+        return;
+      }
+      const m =
+        typeof json.success === "boolean" && json.success === false && json.error?.message
+          ? json.error.message
+          : json.error?.message ?? "No se pudo enviar el enlace.";
+      setMsg(m);
     } catch {
       setMsg("Error de red al solicitar el enlace.");
     } finally {

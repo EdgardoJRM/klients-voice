@@ -44,9 +44,33 @@ function cip() {
   return new CognitoIdentityProviderClient({ region: env.region });
 }
 
-/** Random password for one-time Cognito ADMIN_NO_SRP auth after magic link click */
+/** Meets typical Cognito pool policy (lower, upper, number, symbol) for AdminSetUserPassword */
 function oneTimePassword(): string {
-  return randomBytes(48).toString("base64url");
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%^&*";
+  const required = [
+    upper[randomBytes(1)[0]! % upper.length]!,
+    lower[randomBytes(1)[0]! % lower.length]!,
+    digits[randomBytes(1)[0]! % digits.length]!,
+    symbols[randomBytes(1)[0]! % symbols.length]!,
+  ];
+  const all = upper + lower + digits + symbols;
+  const targetLen = 48;
+  const chars: string[] = [...required];
+  const extra = randomBytes(targetLen - required.length);
+  for (let i = 0; i < extra.length; i++) {
+    chars.push(all[extra[i]! % all.length]!);
+  }
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomBytes(1)[0]! % (i + 1);
+    const a = chars[i]!;
+    const b = chars[j]!;
+    chars[i] = b;
+    chars[j] = a;
+  }
+  return chars.join("");
 }
 
 export async function requestMagicLinkForEmail(email: string, appBaseUrl: string): Promise<void> {
